@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bass Tab Studio v27.3 - Big Comic Lyrics</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            background: #202124; 
+            margin: 0; 
+            display: flex; 
+            flex-direction: column; 
+            height: 100vh; 
+            overflow: hidden; 
+        }
+        .menu-bar { 
+            background: #fff; 
+            border-bottom: 1px solid #ccc; 
+            padding: 8px 20px; 
+            display: flex; 
+            gap: 15px; 
+            align-items: center; 
+            z-index: 100; 
+            font-size: 13px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3); 
+        }
+        .menu-item { 
+            cursor: pointer; 
+            padding: 6px 12px; 
+            border-radius: 4px; 
+            background: #eee; 
+            border: 1px solid #ccc; 
+            font-weight: 600; 
+            white-space: nowrap; 
+        }
+        .menu-item:hover { background: #ddd; }
+
+        .tab-bar { 
+            background: #35363a; 
+            display: flex; 
+            padding: 5px 10px 0 10px; 
+            gap: 5px; 
+            border-bottom: 1px solid #111; 
+        }
+        .tab { 
+            background: #4e5254; 
+            padding: 8px 18px; 
+            border-radius: 6px 6px 0 0; 
+            cursor: pointer; 
+            font-size: 11px; 
+            font-weight: bold; 
+            color: #ccc; 
+            display: flex; 
+            align-items: center; 
+            gap: 10px; 
+            border: 1px solid transparent; 
+            border-bottom: none; 
+        }
+        .tab.active { 
+            background: white; 
+            color: #0078d4; 
+            border-color: #0078d4; 
+        }
+        .close-x { font-size: 14px; opacity: 0.7; }
+        .close-x:hover { opacity: 1; color: #d32f2f; }
+
+        #document-container { 
+            flex: 1; 
+            overflow: auto; 
+            padding: 40px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            background: #525659; 
+        }
+        #canvas-wrapper { 
+            background: white; 
+            box-shadow: 0 0 40px rgba(0,0,0,0.8); 
+            position: relative; 
+            transform-origin: top center; 
+        }
+        canvas { display: block; cursor: crosshair; }
+
+        /* Bigger, bold Comic Sans for lyrics only */
+        .lyric-input { 
+            position: absolute; 
+            left: 80px; 
+            width: 1040px; 
+            border: none; 
+            border-bottom: 1px dashed #aaa; 
+            font-family: 'Comic Sans MS', cursive; 
+            font-size: 18px; 
+            font-weight: bold;
+            padding: 2px 0; 
+            background: transparent; 
+            outline: none; 
+        }
+        .lyric-input:focus { 
+            border-bottom: 1px solid #0078d4; 
+        }
+
+        .status-tip { 
+            background: #1e1e1e; 
+            color: #aaa; 
+            padding: 8px 25px; 
+            font-size: 11px; 
+            display: flex; 
+            justify-content: space-between; 
+        }
+
+        /* Print Styles - Fixed */
+        @media print { 
+            .menu-bar, .tab-bar, .status-tip { display: none !important; } 
+            body, html { height: auto !important; overflow: visible !important; background: white; }
+            #document-container { padding: 0 !important; background: white; overflow: visible !important; }
+            #canvas-wrapper { box-shadow: none !important; transform: none !important; margin: 0 auto !important; width: 100% !important; max-width: 1200px !important; }
+            canvas { width: 100% !important; height: auto !important; max-width: 1200px !important; }
+            .lyric-input { 
+                border: none !important; 
+                background: transparent !important; 
+                border-bottom: 1px solid #999 !important; 
+                font-size: 18px !important; 
+                font-weight: bold !important;
+                font-family: 'Comic Sans MS', cursive !important;
+            }
+            @page { size: letter portrait; margin: 0.5in; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="menu-bar">
+    <div class="menu-item" onclick="createNewTab()">📄 New Sheet</div>
+    <div class="menu-item" onclick="addPage()">+ Page</div>
+    <div class="menu-item" onclick="clearAllNotes()">🗑️ Clear Notes</div>
+    <div style="border-left: 1px solid #ddd; height: 20px;"></div>
+    <div class="menu-item" id="playBtn" onclick="togglePlayback()" style="background:#28a745; color:white;">▶ Play</div>
+    <div class="menu-item" onclick="rewind()">[R] Rewind</div>
+    <div class="menu-item" id="metroBtn" onclick="toggleMetronome()">🥁 Metro: OFF</div>
+    <div style="border-left: 1px solid #ddd; height: 20px;"></div>
+    <label>Snap:</label>
+    <select id="resolution">
+        <option value="4">1/4</option>
+        <option value="8" selected>1/8</option>
+        <option value="16">1/16</option>
+        <option value="32">1/32</option>
+    </select>
+    <div style="border-left: 1px solid #ddd; height: 20px;"></div>
+    <label>🔍 Zoom:</label>
+    <input type="range" id="zoomSlider" min="0.3" max="1.5" step="0.05" value="0.75" oninput="updateZoom()">
+    <span id="zoomLevel" style="font-size:12px; width:45px; display:inline-block;">75%</span>
+    <div style="border-left: 1px solid #ddd; height: 20px;"></div>
+    <div class="menu-item" onclick="window.print()">🖨️ Print</div>
+    <div class="menu-item" onclick="saveSong()">💾 Save</div>
+    <div class="menu-item" onclick="loadSong()">📂 Load</div>
+    <div style="margin-left:auto; font-weight:bold; color:#0078d4">STUDIO v27.3</div>
+</div>
+
+<div class="tab-bar" id="tabContainer"></div>
+
+<div id="document-container">
+    <div id="canvas-wrapper">
+        <div id="lyrics-container"></div>
+        <canvas id="tabCanvas"></canvas>
+    </div>
+</div>
+
+<div class="status-tip">
+    <span><b>Tip:</b> Space = Play/Pause | R = Rewind | Ctrl+Z = Undo | Ctrl+C/V = Copy/Paste</span>
+    <span>Click title, BPM, or Time Sig to edit • Right-click notes for options</span>
+</div>
+
+<script>
+    const canvas = document.getElementById('tabCanvas');
+    const ctx = canvas.getContext('2d');
+    const lyricsContainer = document.getElementById('lyrics-container');
+    const tabContainer = document.getElementById('tabContainer');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomLevel = document.getElementById('zoomLevel');
+    const resInput = document.getElementById('resolution');
+    const canvasWrapper = document.getElementById('canvas-wrapper');
+
+    let tabs = [], activeTabIndex = -1, isMetronome = false;
+    let history = [], historyIndex = -1;
+    let globalClipboard = [];
+    let selectedNotes = [], isDragging = false;
+
+    const PAGE_WIDTH = 1200, STAVE_LEFT = 80, DRAW_WIDTH = 1040, STRING_SPACING = 25, LINE_HEIGHT = 200, TOP_MARGIN = 180;
+    const BASS_FREQS = [98.00, 73.42, 55.00, 41.20];
+    const MEASURE_WIDTH = DRAW_WIDTH / 4;
+    const START_BUFFER = MEASURE_WIDTH / 8;
+
+    let audioCtx = null;
+
+    function init() {
+        canvas.width = PAGE_WIDTH;
+        createNewTab();
+    }
+
+    function createTabObject(title = "NEW BASS SONG") {
+        return {
+            songTitle: title,
+            notes: [],
+            lyrics: {},
+            lines: 6,
+            bpm: 120,
+            timeSig: 4,
+            playheadX: STAVE_LEFT,
+            currentLine: 0,
+            isPlaying: false
+        };
+    }
+
+    function saveHistory() {
+        if (activeTabIndex === -1) return;
+        const t = tabs[activeTabIndex];
+        const snapshot = JSON.parse(JSON.stringify(t.notes));
+        history = history.slice(0, historyIndex + 1);
+        history.push(snapshot);
+        historyIndex++;
+        if (history.length > 50) {
+            history.shift();
+            historyIndex--;
+        }
+    }
+
+    function undo() {
+        if (historyIndex <= 0 || activeTabIndex === -1) return;
+        historyIndex--;
+        tabs[activeTabIndex].notes = JSON.parse(JSON.stringify(history[historyIndex]));
+        selectedNotes = [];
+        draw();
+    }
+
+    function redo() {
+        if (historyIndex >= history.length - 1 || activeTabIndex === -1) return;
+        historyIndex++;
+        tabs[activeTabIndex].notes = JSON.parse(JSON.stringify(history[historyIndex]));
+        selectedNotes = [];
+        draw();
+    }
+
+    function updateZoom() {
+        const val = parseFloat(zoomSlider.value);
+        canvasWrapper.style.transform = `scale(${val})`;
+        canvasWrapper.style.marginBottom = `${-(1 - val) * canvas.height * 0.8}px`;
+        zoomLevel.textContent = Math.round(val * 100) + "%";
+    }
+
+    function createNewTab(title, data) {
+        let newTab = createTabObject(title);
+        if (data) {
+            newTab.songTitle = data.songTitle || data.title || "UNTITLED";
+            newTab.notes = (data.notes || []).map(n => ({...n, played: false, firstKey: true}));
+            newTab.lyrics = data.lyrics || {};
+            newTab.lines = data.lines || 6;
+            newTab.bpm = data.bpm || 120;
+            newTab.timeSig = data.timeSig || 4;
+        }
+        tabs.push(newTab);
+        switchTab(tabs.length - 1);
+        saveHistory();
+    }
+
+    function switchTab(index) {
+        if (activeTabIndex !== -1 && tabs[activeTabIndex]) tabs[activeTabIndex].isPlaying = false;
+        activeTabIndex = index;
+        history = [];
+        historyIndex = -1;
+        updateCanvasHeight();
+        syncLyrics();
+        draw();
+        renderTabs();
+        saveHistory();
+    }
+
+    function renderTabs() {
+        tabContainer.innerHTML = '';
+        tabs.forEach((tab, i) => {
+            const div = document.createElement('div');
+            div.className = `tab ${i === activeTabIndex ? 'active' : ''}`;
+            div.onclick = () => switchTab(i);
+            div.innerHTML = `<span>${(tab.songTitle || "Untitled").substring(0, 15)}</span><span class="close-x" onclick="closeTab(${i}, event)">✕</span>`;
+            tabContainer.appendChild(div);
+        });
+    }
+
+    function closeTab(index, e) {
+        e.stopPropagation();
+        tabs.splice(index, 1);
+        if (tabs.length === 0) createNewTab();
+        else switchTab(Math.max(0, index - 1));
+    }
+
+    function updateCanvasHeight() {
+        const t = tabs[activeTabIndex];
+        canvas.height = (t.lines * LINE_HEIGHT) + 200;
+        updateZoom();
+    }
+
+    function addPage() {
+        tabs[activeTabIndex].lines += 6;
+        updateCanvasHeight();
+        syncLyrics();
+        draw();
+        saveHistory();
+    }
+
+    function clearAllNotes() {
+        if (confirm("Clear ALL notes on this sheet?")) {
+            tabs[activeTabIndex].notes = [];
+            selectedNotes = [];
+            draw();
+            saveHistory();
+        }
+    }
+
+    function syncLyrics() {
+        lyricsContainer.innerHTML = '';
+        const t = tabs[activeTabIndex];
+        for (let i = 0; i < t.lines; i++) {
+            const input = document.createElement('input');
+            input.className = 'lyric-input';
+            input.style.top = (TOP_MARGIN + (i * LINE_HEIGHT) - 52) + "px";
+            input.value = t.lyrics[i] || "";
+            input.oninput = (e) => { t.lyrics[i] = e.target.value; };
+            lyricsContainer.appendChild(input);
+        }
+    }
+
+    function draw() {
+        if (activeTabIndex === -1) return;
+        const t = tabs[activeTabIndex];
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Title
+        ctx.fillStyle = "black";
+        ctx.font = "bold 32px Segoe UI";
+        ctx.textAlign = "center";
+        ctx.fillText(t.songTitle, PAGE_WIDTH / 2, 75);
+
+        // BPM and Time Signature
+        ctx.font = "bold 18px Segoe UI";
+        ctx.textAlign = "left";
+        ctx.fillText("BPM: " + t.bpm, STAVE_LEFT, 115);
+        ctx.fillText("TIME SIG: " + t.timeSig + "/4", STAVE_LEFT + 350, 115);
+
+        // Draw staves
+        for (let l = 0; l < t.lines; l++) {
+            let yBase = TOP_MARGIN + (l * LINE_HEIGHT);
+
+            ctx.strokeStyle = "#bbb";
+            ctx.lineWidth = 1;
+            for (let i = 0; i < 4; i++) {
+                ctx.beginPath();
+                ctx.moveTo(STAVE_LEFT, yBase + (i * STRING_SPACING));
+                ctx.lineTo(STAVE_LEFT + DRAW_WIDTH, yBase + (i * STRING_SPACING));
+                ctx.stroke();
+            }
+
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 2;
+            for (let b = 0; b <= 4; b++) {
+                let x = STAVE_LEFT + (b * MEASURE_WIDTH);
+                ctx.beginPath();
+                ctx.moveTo(x, yBase);
+                ctx.lineTo(x, yBase + (3 * STRING_SPACING));
+                ctx.stroke();
+
+                if (b < 4) {
+                    ctx.font = "12px Segoe UI";
+                    ctx.fillStyle = "#555";
+                    ctx.textAlign = "center";
+                    ctx.fillText((l * 4 + b + 1).toString(), x + MEASURE_WIDTH / 2, yBase - 12);
+                }
+            }
+        }
+
+        // Draw notes (unchanged from your original)
+        t.notes.forEach(note => {
+            const isSel = selectedNotes.includes(note);
+            ctx.lineWidth = isSel ? 5 : 2;
+            ctx.strokeStyle = isSel ? "#0078d4" : "#000";
+            ctx.fillStyle = isSel ? "#e3f2fd" : "white";
+
+            ctx.beginPath();
+            ctx.arc(note.x, note.y, 14, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = "black";
+            ctx.font = "bold 15px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(note.fret, note.x, note.y + 5);
+        });
+
+        // Playhead
+        if (t.isPlaying || t.playheadX > STAVE_LEFT) {
+            ctx.strokeStyle = "red";
+            ctx.lineWidth = 3;
+            let yTop = TOP_MARGIN + (t.currentLine * LINE_HEIGHT);
+            ctx.beginPath();
+            ctx.moveTo(t.playheadX, yTop - 15);
+            ctx.lineTo(t.playheadX, yTop + 95);
+            ctx.stroke();
+        }
+    }
+
+    function playAudio(freq, type = 'triangle', gain = 0.4, decay = 0.8) {
+        if (!audioCtx) audioCtx = new AudioContext();
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        g.gain.setValueAtTime(gain, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + decay);
+        osc.connect(g);
+        g.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + decay);
+    }
+
+    function togglePlayback() {
+        if (activeTabIndex === -1) return;
+        const t = tabs[activeTabIndex];
+        t.isPlaying = !t.isPlaying;
+        const btn = document.getElementById('playBtn');
+        btn.innerText = t.isPlaying ? "⏹ Stop" : "▶ Play";
+        btn.style.background = t.isPlaying ? "#d32f2f" : "#28a745";
+
+        if (t.isPlaying) {
+            t.notes.forEach(n => { if (n.line === t.currentLine) n.played = false; });
+            animate();
+        }
+        draw();
+    }
+
+    function animate() {
+        const t = tabs[activeTabIndex];
+        if (!t || !t.isPlaying) return;
+
+        const pixelsPerBeat = MEASURE_WIDTH / t.timeSig;
+        const pixelsPerFrame = ((t.bpm / 60) * pixelsPerBeat) / 60;
+        const oldX = t.playheadX;
+        t.playheadX += pixelsPerFrame;
+
+        if (isMetronome) {
+            const lastBeat = Math.floor((oldX - STAVE_LEFT - START_BUFFER) / pixelsPerBeat);
+            const currBeat = Math.floor((t.playheadX - STAVE_LEFT - START_BUFFER) / pixelsPerBeat);
+            if (currBeat > lastBeat && currBeat >= 0) {
+                playAudio(currBeat % t.timeSig === 0 ? 880 : 440, 'sine', 0.12, 0.08);
+            }
+        }
+
+        if (t.playheadX > STAVE_LEFT + DRAW_WIDTH) {
+            t.playheadX = STAVE_LEFT;
+            t.currentLine++;
+            if (t.currentLine >= t.lines) {
+                t.isPlaying = false;
+                document.getElementById('playBtn').innerText = "▶ Play";
+                document.getElementById('playBtn').style.background = "#28a745";
+                draw();
+                return;
+            }
+            t.notes.forEach(n => { if (n.line === t.currentLine) n.played = false; });
+        }
+
+        t.notes.forEach(n => {
+            if (n.line === t.currentLine && !n.played && Math.abs(t.playheadX - n.x) < 6) {
+                playAudio(BASS_FREQS[n.string] * Math.pow(2, (parseInt(n.fret) || 0) / 12));
+                n.played = true;
+            }
+        });
+
+        draw();
+        requestAnimationFrame(animate);
+    }
+
+    function toggleMetronome() {
+        isMetronome = !isMetronome;
+        document.getElementById('metroBtn').innerText = isMetronome ? "🥁 Metro: ON" : "🥁 Metro: OFF";
+    }
+
+    function rewind() {
+        const t = tabs[activeTabIndex];
+        t.isPlaying = false;
+        t.playheadX = STAVE_LEFT;
+        t.currentLine = 0;
+        t.notes.forEach(n => n.played = false);
+        document.getElementById('playBtn').innerText = "▶ Play";
+        document.getElementById('playBtn').style.background = "#28a745";
+        draw();
+    }
+
+    // ====================== INPUT HANDLERS ======================
+
+    window.onkeydown = (e) => {
+        if (document.activeElement.tagName === 'INPUT' || activeTabIndex === -1) return;
+        const t = tabs[activeTabIndex];
+
+        if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); return; }
+        if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); return; }
+        if (e.ctrlKey && e.key === 'c') { copyNotes(); return; }
+        if (e.ctrlKey && e.key === 'v') { pasteNotes(); return; }
+
+        if (e.code === "Space") { e.preventDefault(); togglePlayback(); }
+        if (e.key.toLowerCase() === 'r') { rewind(); return; }
+
+        if (e.key === 'Backspace' || e.key === 'Delete') {
+            if (selectedNotes.length > 0) {
+                t.notes = t.notes.filter(n => !selectedNotes.includes(n));
+                selectedNotes = [];
+                draw();
+                saveHistory();
+            }
+            return;
+        }
+
+        if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && selectedNotes.length === 1) {
+            e.preventDefault();
+            const sorted = [...t.notes].sort((a, b) => a.line !== b.line ? a.line - b.line : a.x - b.x);
+            let idx = sorted.findIndex(n => n === selectedNotes[0]);
+            if (idx === -1) return;
+
+            if (e.key === "ArrowRight") idx = (idx + 1) % sorted.length;
+            else idx = (idx - 1 + sorted.length) % sorted.length;
+
+            selectedNotes = [sorted[idx]];
+            playAudio(BASS_FREQS[selectedNotes[0].string] * Math.pow(2, (parseInt(selectedNotes[0].fret) || 0) / 12));
+            draw();
+            return;
+        }
+
+        if (selectedNotes.length === 1) {
+            let n = selectedNotes[0];
+            if (e.key >= '0' && e.key <= '9') {
+                n.fret = n.firstKey ? e.key : n.fret + e.key;
+                n.firstKey = false;
+                playAudio(BASS_FREQS[n.string] * Math.pow(2, (parseInt(n.fret) || 0) / 12));
+            }
+            if (e.key === '+' || e.key === '=') {
+                n.fret = (parseInt(n.fret) + 1).toString();
+                playAudio(BASS_FREQS[n.string] * Math.pow(2, (parseInt(n.fret) || 0) / 12));
+            }
+            if (e.key === '-' || e.key === '_') {
+                n.fret = Math.max(0, parseInt(n.fret) - 1).toString();
+                playAudio(BASS_FREQS[n.string] * Math.pow(2, (parseInt(n.fret) || 0) / 12));
+            }
+            draw();
+        }
+    };
+
+    canvas.onmousedown = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const scale = parseFloat(zoomSlider.value);
+        const mX = (e.clientX - rect.left) / scale;
+        const mY = (e.clientY - rect.top) / scale;
+        const t = tabs[activeTabIndex];
+
+        if (mY < 90) {
+            const newT = prompt("Song Title:", t.songTitle);
+            if (newT) t.songTitle = newT.toUpperCase();
+            renderTabs();
+            draw();
+            return;
+        }
+        if (mY > 90 && mY < 135 && mX < 340) {
+            const b = prompt("BPM:", t.bpm);
+            if (b && !isNaN(b)) t.bpm = parseInt(b);
+            draw();
+            return;
+        }
+        if (mY > 90 && mY < 135 && mX > 340 && mX < 650) {
+            const s = prompt("Beats per measure:", t.timeSig);
+            if (s && !isNaN(s)) t.timeSig = parseInt(s);
+            draw();
+            return;
+        }
+
+        const found = t.notes.find(n => Math.hypot(n.x - mX, n.y - mY) < 22);
+        if (found) {
+            selectedNotes = [found];
+            isDragging = true;
+            found.firstKey = true;
+            playAudio(BASS_FREQS[found.string] * Math.pow(2, (parseInt(found.fret) || 0) / 12));
+        } else {
+            const lIdx = Math.floor((mY - TOP_MARGIN + 40) / LINE_HEIGHT);
+            const sIdx = Math.round((mY - (TOP_MARGIN + lIdx * LINE_HEIGHT)) / STRING_SPACING);
+
+            if (sIdx >= 0 && sIdx <= 3 && lIdx >= 0 && lIdx < t.lines) {
+                const step = MEASURE_WIDTH / parseInt(resInput.value);
+                let relX = mX - STAVE_LEFT;
+                let measIdx = Math.floor(relX / MEASURE_WIDTH);
+                let measX = relX % MEASURE_WIDTH;
+                let snappedX = Math.round((measX - START_BUFFER) / step) * step + START_BUFFER;
+                let xPos = STAVE_LEFT + (measIdx * MEASURE_WIDTH) + snappedX;
+
+                const newNote = {
+                    x: Math.max(STAVE_LEFT, Math.min(STAVE_LEFT + DRAW_WIDTH, xPos)),
+                    y: TOP_MARGIN + (lIdx * LINE_HEIGHT) + (sIdx * STRING_SPACING),
+                    fret: "0",
+                    string: sIdx,
+                    line: lIdx,
+                    played: false,
+                    firstKey: true
+                };
+
+                t.notes.push(newNote);
+                selectedNotes = [newNote];
+                isDragging = true;
+                playAudio(BASS_FREQS[newNote.string] * Math.pow(2, 0));
+                saveHistory();
+            }
+        }
+        draw();
+    };
+
+    window.onmousemove = (e) => {
+        if (!isDragging || selectedNotes.length !== 1) return;
+        const rect = canvas.getBoundingClientRect();
+        const scale = parseFloat(zoomSlider.value);
+        const mX = (e.clientX - rect.left) / scale;
+        const mY = (e.clientY - rect.top) / scale;
+        const t = tabs[activeTabIndex];
+        const n = selectedNotes[0];
+
+        const step = MEASURE_WIDTH / parseInt(resInput.value);
+        let relX = mX - STAVE_LEFT;
+        let measIdx = Math.floor(relX / MEASURE_WIDTH);
+        let measX = relX % MEASURE_WIDTH;
+        let snappedX = Math.round((measX - START_BUFFER) / step) * step + START_BUFFER;
+        n.x = Math.max(STAVE_LEFT, Math.min(STAVE_LEFT + DRAW_WIDTH, STAVE_LEFT + (measIdx * MEASURE_WIDTH) + snappedX));
+
+        const lIdx = Math.floor((mY - TOP_MARGIN + 40) / LINE_HEIGHT);
+        const sIdx = Math.round((mY - (TOP_MARGIN + lIdx * LINE_HEIGHT)) / STRING_SPACING);
+
+        if (sIdx >= 0 && sIdx <= 3 && lIdx >= 0 && lIdx < t.lines) {
+            n.y = TOP_MARGIN + (lIdx * LINE_HEIGHT) + (sIdx * STRING_SPACING);
+            n.string = sIdx;
+            n.line = lIdx;
+        }
+        draw();
+    };
+
+    window.onmouseup = () => {
+        if (isDragging) saveHistory();
+        isDragging = false;
+    };
+
+    canvas.oncontextmenu = (e) => {
+        e.preventDefault();
+        if (selectedNotes.length !== 1) return;
+
+        const note = selectedNotes[0];
+        const action = prompt("Note Options:\n1. Delete\n2. String Up\n3. String Down\nEnter number:", "");
+
+        if (action === "1") {
+            const t = tabs[activeTabIndex];
+            t.notes = t.notes.filter(n => n !== note);
+            selectedNotes = [];
+        } else if (action === "2" && note.string > 0) {
+            note.string--;
+            note.y -= STRING_SPACING;
+        } else if (action === "3" && note.string < 3) {
+            note.string++;
+            note.y += STRING_SPACING;
+        }
+        draw();
+        saveHistory();
+    };
+
+    function copyNotes() {
+        if (selectedNotes.length === 0) return;
+        globalClipboard = selectedNotes.map(n => ({...n}));
+    }
+
+    function pasteNotes() {
+        if (globalClipboard.length === 0 || activeTabIndex === -1) return;
+        const t = tabs[activeTabIndex];
+        const offset = 40;
+
+        globalClipboard.forEach((orig, i) => {
+            const clone = {...orig};
+            clone.x += offset * (i + 1);
+            if (clone.x > STAVE_LEFT + DRAW_WIDTH) clone.x = STAVE_LEFT + 100;
+            t.notes.push(clone);
+        });
+
+        selectedNotes = t.notes.slice(-globalClipboard.length);
+        draw();
+        saveHistory();
+    }
+
+    function saveSong() {
+        const t = tabs[activeTabIndex];
+        const blob = new Blob([JSON.stringify(t)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = (t.songTitle || "bass_song").toLowerCase().replace(/ /g, '_') + '.bass';
+        a.click();
+    }
+
+    function loadSong() {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.onchange = e => {
+            const reader = new FileReader();
+            reader.onload = ev => {
+                try {
+                    createNewTab(null, JSON.parse(ev.target.result));
+                } catch (err) {
+                    alert("Failed to load file.");
+                }
+            };
+            reader.readAsText(e.target.files[0]);
+        };
+        input.click();
+    }
+
+    console.log("%cBass Tab Studio v27.3 ready! 🎸\nLyrics are now bigger, bold Comic Sans MS", "color:#0078d4; font-weight:bold");
+
+    init();
+</script>
+</body>
+</html>
