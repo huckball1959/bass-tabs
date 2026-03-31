@@ -18,8 +18,11 @@
             border-bottom: 1px solid #ccc; 
             padding: 8px 20px; 
             display: flex; 
+            flex-wrap: wrap;
             gap: 15px; 
+            row-gap: 8px;
             align-items: center; 
+            align-content: flex-start;
             z-index: 100; 
             font-size: 13px; 
             box-shadow: 0 2px 4px rgba(0,0,0,0.3); 
@@ -34,6 +37,15 @@
             white-space: nowrap; 
         }
         .menu-item:hover { background: #ddd; }
+        .menu-item.disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+        .menu-divider {
+            border-left: 1px solid #ddd;
+            height: 20px;
+        }
 
         .tab-bar { 
             background: #35363a; 
@@ -79,6 +91,21 @@
             position: relative; 
             transform-origin: top center; 
         }
+        #timestamp-badge {
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #5f6368;
+            background: rgba(255,255,255,0.92);
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 6px 8px;
+            user-select: none;
+            z-index: 5;
+            cursor: help;
+        }
         canvas { display: block; cursor: crosshair; }
 
         /* Bigger, bold Comic Sans for lyrics only */
@@ -114,6 +141,7 @@
             body, html { height: auto !important; overflow: visible !important; background: white; }
             #document-container { padding: 0 !important; background: white; overflow: visible !important; }
             #canvas-wrapper { box-shadow: none !important; transform: none !important; margin: 0 auto !important; width: 100% !important; max-width: 1200px !important; }
+            #timestamp-badge { border: none !important; background: transparent !important; }
             canvas { width: 100% !important; height: auto !important; max-width: 1200px !important; }
             .lyric-input { 
                 border: none !important; 
@@ -133,11 +161,19 @@
     <div class="menu-item" onclick="createNewTab()">📄 New Sheet</div>
     <div class="menu-item" onclick="addPage()">+ Page</div>
     <div class="menu-item" onclick="clearAllNotes()">🗑️ Clear Notes</div>
-    <div style="border-left: 1px solid #ddd; height: 20px;"></div>
+    <div class="menu-item" id="undoBtn" onclick="undo()">↶ Undo</div>
+    <div class="menu-item" id="redoBtn" onclick="redo()">↷ Redo</div>
+    <div class="menu-item" onclick="copyMeasure()">📋 Copy Measure</div>
+    <div class="menu-item" onclick="pasteMeasure()">📌 Paste Measure</div>
+    <div class="menu-divider"></div>
+    <label>Chord:</label>
+    <select id="chordSelect"></select>
+    <div class="menu-divider"></div>
     <div class="menu-item" id="playBtn" onclick="togglePlayback()" style="background:#28a745; color:white;">▶ Play</div>
     <div class="menu-item" onclick="rewind()">[R] Rewind</div>
+    <div class="menu-item" id="cursorBtn" onclick="toggleCursorPlaceMode()">🎯 Set Cursor: OFF</div>
     <div class="menu-item" id="metroBtn" onclick="toggleMetronome()">🥁 Metro: OFF</div>
-    <div style="border-left: 1px solid #ddd; height: 20px;"></div>
+    <div class="menu-divider"></div>
     <label>Snap:</label>
     <select id="resolution">
         <option value="4">1/4</option>
@@ -145,11 +181,11 @@
         <option value="16">1/16</option>
         <option value="32">1/32</option>
     </select>
-    <div style="border-left: 1px solid #ddd; height: 20px;"></div>
+    <div class="menu-divider"></div>
     <label>🔍 Zoom:</label>
     <input type="range" id="zoomSlider" min="0.3" max="1.5" step="0.05" value="0.75" oninput="updateZoom()">
     <span id="zoomLevel" style="font-size:12px; width:45px; display:inline-block;">75%</span>
-    <div style="border-left: 1px solid #ddd; height: 20px;"></div>
+    <div class="menu-divider"></div>
     <div class="menu-item" onclick="window.print()">🖨️ Print</div>
     <div class="menu-item" onclick="saveSong()">💾 Save</div>
     <div class="menu-item" onclick="loadSong()">📂 Load</div>
@@ -160,14 +196,15 @@
 
 <div id="document-container">
     <div id="canvas-wrapper">
+        <div id="timestamp-badge" title="">Created: --</div>
         <div id="lyrics-container"></div>
         <canvas id="tabCanvas"></canvas>
     </div>
 </div>
 
 <div class="status-tip">
-    <span><b>Tip:</b> Space = Play/Pause | R = Rewind | Ctrl+Z = Undo | Ctrl+C/V = Copy/Paste</span>
-    <span>Click title, BPM, or Time Sig to edit • Right-click notes for options</span>
+    <span><b>Tip:</b> Space = Play/Pause | R = Rewind | Ctrl+Z / Ctrl+Y = Undo/Redo | Ctrl+C/V = Copy/Paste</span>
+    <span>Use Set Cursor mode (or Alt+Click) to place playhead • Click barlines for measure selection • Right-click selected items for options</span>
 </div>
 
 <script>
@@ -179,42 +216,161 @@
     const zoomLevel = document.getElementById('zoomLevel');
     const resInput = document.getElementById('resolution');
     const canvasWrapper = document.getElementById('canvas-wrapper');
+    const undoBtn = document.getElementById('undoBtn');
+    const redoBtn = document.getElementById('redoBtn');
+    const chordSelect = document.getElementById('chordSelect');
+    const cursorBtn = document.getElementById('cursorBtn');
+    const timestampBadge = document.getElementById('timestamp-badge');
 
     let tabs = [], activeTabIndex = -1, isMetronome = false;
     let history = [], historyIndex = -1;
     let globalClipboard = [];
+    let measureClipboard = null;
     let selectedNotes = [], isDragging = false;
+    let selectedChord = null, isDraggingChord = false;
+    let selectedMeasures = [];
+    let isAwaitingPasteBarline = false;
+    let isCursorPlaceMode = false;
+    const SESSION_STORAGE_KEY = "bassTabStudio_v273_session";
 
-    const PAGE_WIDTH = 1200, STAVE_LEFT = 80, DRAW_WIDTH = 1040, STRING_SPACING = 25, LINE_HEIGHT = 200, TOP_MARGIN = 180;
+    const PAGE_WIDTH = 1200, STAVE_LEFT = 80, DRAW_WIDTH = 1040, STRING_SPACING = 25, LINE_HEIGHT = 200, TOP_MARGIN = 220;
+    const LYRIC_OFFSET = 88;
+    const CHORD_OFFSET = 26;
     const BASS_FREQS = [98.00, 73.42, 55.00, 41.20];
     const MEASURE_WIDTH = DRAW_WIDTH / 4;
     const START_BUFFER = MEASURE_WIDTH / 8;
+    const CURSOR_PARK_X = STAVE_LEFT - 10;
+    const BARLINE_HIT_RADIUS = 12;
+    const NOTE_CREATION_BARLINE_MARGIN = 16;
 
     let audioCtx = null;
 
+    function sanitizeTab(tab) {
+        const safe = createTabObject(tab.songTitle || tab.title || "UNTITLED");
+        safe.songTitle = (tab.songTitle || tab.title || "UNTITLED").toString().toUpperCase().substring(0, 60);
+        safe.lines = Math.max(1, parseInt(tab.lines, 10) || 6);
+        safe.bpm = Math.min(300, Math.max(30, parseInt(tab.bpm, 10) || 120));
+        safe.timeSig = Math.min(12, Math.max(1, parseInt(tab.timeSig, 10) || 4));
+        safe.lyrics = tab.lyrics && typeof tab.lyrics === 'object' ? tab.lyrics : {};
+        safe.chords = (Array.isArray(tab.chords) ? tab.chords : []).map(ch => ({
+            x: Number.isFinite(ch.x) ? Math.max(STAVE_LEFT, Math.min(STAVE_LEFT + DRAW_WIDTH, ch.x)) : STAVE_LEFT + 20,
+            line: Math.max(0, Math.min(safe.lines - 1, parseInt(ch.line, 10) || 0)),
+            symbol: (ch.symbol || "C").toString().substring(0, 12)
+        }));
+        safe.createdAt = Number.isFinite(tab.createdAt) ? tab.createdAt : Date.now();
+        safe.updatedAt = Number.isFinite(tab.updatedAt) ? tab.updatedAt : safe.createdAt;
+        safe.notes = (Array.isArray(tab.notes) ? tab.notes : []).map(n => ({
+            x: Number.isFinite(n.x) ? n.x : STAVE_LEFT,
+            y: Number.isFinite(n.y) ? n.y : TOP_MARGIN,
+            fret: n.fret === "" ? "" : `${Math.max(0, Math.min(36, parseInt(n.fret, 10) || 0))}`,
+            string: Math.max(0, Math.min(3, parseInt(n.string, 10) || 0)),
+            line: Math.max(0, Math.min(safe.lines - 1, parseInt(n.line, 10) || 0)),
+            hasFret: typeof n.hasFret === "boolean" ? n.hasFret : n.fret !== undefined && n.fret !== null && n.fret !== "",
+            played: false,
+            firstKey: true
+        }));
+        normalizeNotePositions(safe);
+        return safe;
+    }
+
+    function normalizeNotePositions(tab) {
+        tab.notes = (tab.notes || []).map(n => {
+            const line = Math.max(0, Math.min(tab.lines - 1, parseInt(n.line, 10) || 0));
+            const string = Math.max(0, Math.min(3, parseInt(n.string, 10) || 0));
+            return {
+                ...n,
+                line,
+                string,
+                x: Math.max(STAVE_LEFT, Math.min(STAVE_LEFT + DRAW_WIDTH, Number.isFinite(n.x) ? n.x : STAVE_LEFT)),
+                y: TOP_MARGIN + (line * LINE_HEIGHT) + (string * STRING_SPACING)
+            };
+        });
+    }
+
+    function serializeTabState(tab) {
+        return {
+            songTitle: tab.songTitle,
+            notes: tab.notes.map(n => ({ ...n })),
+            chords: (tab.chords || []).map(ch => ({ ...ch })),
+            lyrics: { ...tab.lyrics },
+            lines: tab.lines,
+            bpm: tab.bpm,
+            timeSig: tab.timeSig,
+            createdAt: tab.createdAt,
+            updatedAt: tab.updatedAt
+        };
+    }
+
+    function restoreTabState(target, state) {
+        target.songTitle = state.songTitle || "UNTITLED";
+        target.notes = (state.notes || []).map(n => ({
+            ...n,
+            hasFret: typeof n.hasFret === "boolean" ? n.hasFret : n.fret !== undefined && n.fret !== null && n.fret !== "",
+            played: false,
+            firstKey: true
+        }));
+        target.chords = (state.chords || []).map(ch => ({
+            x: Number.isFinite(ch.x) ? Math.max(STAVE_LEFT, Math.min(STAVE_LEFT + DRAW_WIDTH, ch.x)) : STAVE_LEFT + 20,
+            line: Math.max(0, Math.min((parseInt(state.lines, 10) || 6) - 1, parseInt(ch.line, 10) || 0)),
+            symbol: (ch.symbol || "C").toString().substring(0, 12)
+        }));
+        target.lyrics = state.lyrics || {};
+        target.lines = Math.max(1, parseInt(state.lines, 10) || 6);
+        target.bpm = Math.min(300, Math.max(30, parseInt(state.bpm, 10) || 120));
+        target.timeSig = Math.min(12, Math.max(1, parseInt(state.timeSig, 10) || 4));
+        target.createdAt = Number.isFinite(state.createdAt) ? state.createdAt : Date.now();
+        target.updatedAt = Number.isFinite(state.updatedAt) ? state.updatedAt : target.createdAt;
+        normalizeNotePositions(target);
+    }
+
+    function formatTimestamp(ts) {
+        return new Date(ts).toLocaleString();
+    }
+
+    function refreshTimestampBadge() {
+        if (activeTabIndex === -1 || !tabs[activeTabIndex]) {
+            timestampBadge.textContent = "Created: --";
+            timestampBadge.title = "";
+            return;
+        }
+        const t = tabs[activeTabIndex];
+        timestampBadge.textContent = `Created: ${formatTimestamp(t.createdAt)}`;
+        timestampBadge.title = `Last Edited: ${formatTimestamp(t.updatedAt)}`;
+    }
+
+    function touchModified() {
+        if (activeTabIndex === -1 || !tabs[activeTabIndex]) return;
+        tabs[activeTabIndex].updatedAt = Date.now();
+        refreshTimestampBadge();
+    }
+
     function init() {
         canvas.width = PAGE_WIDTH;
-        createNewTab();
+        buildChordLibrary();
+        if (!restoreSession()) createNewTab();
     }
 
     function createTabObject(title = "NEW BASS SONG") {
         return {
             songTitle: title,
             notes: [],
+            chords: [],
             lyrics: {},
             lines: 6,
             bpm: 120,
             timeSig: 4,
-            playheadX: STAVE_LEFT,
+            playheadX: CURSOR_PARK_X,
             currentLine: 0,
-            isPlaying: false
+            isPlaying: false,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
         };
     }
 
-    function saveHistory() {
+    function saveHistory(markModified = true) {
         if (activeTabIndex === -1) return;
         const t = tabs[activeTabIndex];
-        const snapshot = JSON.parse(JSON.stringify(t.notes));
+        const snapshot = serializeTabState(t);
         history = history.slice(0, historyIndex + 1);
         history.push(snapshot);
         historyIndex++;
@@ -222,22 +378,41 @@
             history.shift();
             historyIndex--;
         }
+        if (markModified) touchModified();
+        updateHistoryButtons();
+        persistSession();
+    }
+
+    function updateHistoryButtons() {
+        if (!undoBtn || !redoBtn) return;
+        const canUndo = historyIndex > 0;
+        const canRedo = historyIndex < history.length - 1;
+        undoBtn.classList.toggle('disabled', !canUndo);
+        redoBtn.classList.toggle('disabled', !canRedo);
     }
 
     function undo() {
         if (historyIndex <= 0 || activeTabIndex === -1) return;
         historyIndex--;
-        tabs[activeTabIndex].notes = JSON.parse(JSON.stringify(history[historyIndex]));
+        restoreTabState(tabs[activeTabIndex], history[historyIndex]);
         selectedNotes = [];
+        updateCanvasHeight();
+        syncLyrics();
         draw();
+        refreshTimestampBadge();
+        updateHistoryButtons();
     }
 
     function redo() {
         if (historyIndex >= history.length - 1 || activeTabIndex === -1) return;
         historyIndex++;
-        tabs[activeTabIndex].notes = JSON.parse(JSON.stringify(history[historyIndex]));
+        restoreTabState(tabs[activeTabIndex], history[historyIndex]);
         selectedNotes = [];
+        updateCanvasHeight();
+        syncLyrics();
         draw();
+        refreshTimestampBadge();
+        updateHistoryButtons();
     }
 
     function updateZoom() {
@@ -248,18 +423,11 @@
     }
 
     function createNewTab(title, data) {
-        let newTab = createTabObject(title);
-        if (data) {
-            newTab.songTitle = data.songTitle || data.title || "UNTITLED";
-            newTab.notes = (data.notes || []).map(n => ({...n, played: false, firstKey: true}));
-            newTab.lyrics = data.lyrics || {};
-            newTab.lines = data.lines || 6;
-            newTab.bpm = data.bpm || 120;
-            newTab.timeSig = data.timeSig || 4;
-        }
+        let newTab = data ? sanitizeTab(data) : createTabObject(title);
         tabs.push(newTab);
         switchTab(tabs.length - 1);
-        saveHistory();
+        saveHistory(false);
+        persistSession();
     }
 
     function switchTab(index) {
@@ -267,11 +435,13 @@
         activeTabIndex = index;
         history = [];
         historyIndex = -1;
+        updateHistoryButtons();
         updateCanvasHeight();
         syncLyrics();
         draw();
+        refreshTimestampBadge();
         renderTabs();
-        saveHistory();
+        saveHistory(false);
     }
 
     function renderTabs() {
@@ -290,6 +460,7 @@
         tabs.splice(index, 1);
         if (tabs.length === 0) createNewTab();
         else switchTab(Math.max(0, index - 1));
+        persistSession();
     }
 
     function updateCanvasHeight() {
@@ -321,9 +492,13 @@
         for (let i = 0; i < t.lines; i++) {
             const input = document.createElement('input');
             input.className = 'lyric-input';
-            input.style.top = (TOP_MARGIN + (i * LINE_HEIGHT) - 52) + "px";
+            input.style.top = (TOP_MARGIN + (i * LINE_HEIGHT) - LYRIC_OFFSET) + "px";
             input.value = t.lyrics[i] || "";
-            input.oninput = (e) => { t.lyrics[i] = e.target.value; };
+            input.oninput = (e) => {
+                t.lyrics[i] = e.target.value;
+                touchModified();
+                persistSession();
+            };
             lyricsContainer.appendChild(input);
         }
     }
@@ -348,6 +523,25 @@
         // Draw staves
         for (let l = 0; l < t.lines; l++) {
             let yBase = TOP_MARGIN + (l * LINE_HEIGHT);
+            const chordY = yBase - CHORD_OFFSET;
+
+            // Chord lane guide (subtle colored target zone)
+            ctx.fillStyle = "rgba(0, 120, 212, 0.10)";
+            ctx.fillRect(STAVE_LEFT, chordY - 18, DRAW_WIDTH, 24);
+
+            ctx.strokeStyle = "#d7d7d7";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(STAVE_LEFT, chordY + 8);
+            ctx.lineTo(STAVE_LEFT + DRAW_WIDTH, chordY + 8);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.font = "11px Segoe UI";
+            ctx.fillStyle = "#777";
+            ctx.textAlign = "left";
+            ctx.fillText("Chord lane", STAVE_LEFT, chordY - 4);
 
             ctx.strokeStyle = "#bbb";
             ctx.lineWidth = 1;
@@ -362,6 +556,11 @@
             ctx.lineWidth = 2;
             for (let b = 0; b <= 4; b++) {
                 let x = STAVE_LEFT + (b * MEASURE_WIDTH);
+                const measureNum = (l * 4) + b + 1;
+                if (b < 4 && selectedMeasures.includes(measureNum)) {
+                    ctx.fillStyle = "rgba(0, 120, 212, 0.14)";
+                    ctx.fillRect(x + 1, yBase + 1, MEASURE_WIDTH - 2, (3 * STRING_SPACING) - 2);
+                }
                 ctx.beginPath();
                 ctx.moveTo(x, yBase);
                 ctx.lineTo(x, yBase + (3 * STRING_SPACING));
@@ -379,31 +578,46 @@
         // Draw notes (unchanged from your original)
         t.notes.forEach(note => {
             const isSel = selectedNotes.includes(note);
-            ctx.lineWidth = isSel ? 5 : 2;
-            ctx.strokeStyle = isSel ? "#0078d4" : "#000";
-            ctx.fillStyle = isSel ? "#e3f2fd" : "white";
-
-            ctx.beginPath();
-            ctx.arc(note.x, note.y, 14, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-
-            ctx.fillStyle = "black";
-            ctx.font = "bold 15px Arial";
-            ctx.textAlign = "center";
-            ctx.fillText(note.fret, note.x, note.y + 5);
+            if (!note.hasFret) {
+                ctx.lineWidth = isSel ? 5 : 2;
+                ctx.strokeStyle = isSel ? "#0078d4" : "#000";
+                ctx.fillStyle = isSel ? "#e3f2fd" : "white";
+                ctx.beginPath();
+                ctx.arc(note.x, note.y, 14, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            } else {
+                ctx.fillStyle = isSel ? "#0078d4" : "#000";
+                ctx.font = "bold 28px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(note.fret, note.x, note.y + 10);
+            }
         });
 
-        // Playhead
-        if (t.isPlaying || t.playheadX > STAVE_LEFT) {
-            ctx.strokeStyle = "red";
-            ctx.lineWidth = 3;
-            let yTop = TOP_MARGIN + (t.currentLine * LINE_HEIGHT);
-            ctx.beginPath();
-            ctx.moveTo(t.playheadX, yTop - 15);
-            ctx.lineTo(t.playheadX, yTop + 95);
-            ctx.stroke();
-        }
+        // Draw chord symbols (free horizontal placement)
+        t.chords.forEach(ch => {
+            const chordY = TOP_MARGIN + (ch.line * LINE_HEIGHT) - CHORD_OFFSET;
+            const isSelChord = selectedChord === ch;
+            ctx.font = "bold 24px Segoe UI";
+            ctx.textAlign = "center";
+            ctx.fillStyle = isSelChord ? "#0078d4" : "#111";
+            ctx.fillText(ch.symbol, ch.x, chordY);
+            if (isSelChord) {
+                const textWidth = ctx.measureText(ch.symbol).width;
+                ctx.strokeStyle = "#0078d4";
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(ch.x - textWidth / 2 - 4, chordY - 24, textWidth + 8, 30);
+            }
+        });
+
+        // Playhead (always visible)
+        ctx.strokeStyle = "red";
+        ctx.lineWidth = 3;
+        let yTop = TOP_MARGIN + (t.currentLine * LINE_HEIGHT);
+        ctx.beginPath();
+        ctx.moveTo(t.playheadX, yTop - 15);
+        ctx.lineTo(t.playheadX, yTop + 95);
+        ctx.stroke();
     }
 
     function playAudio(freq, type = 'triangle', gain = 0.4, decay = 0.8) {
@@ -433,6 +647,7 @@
             animate();
         }
         draw();
+        persistSession();
     }
 
     function animate() {
@@ -453,7 +668,7 @@
         }
 
         if (t.playheadX > STAVE_LEFT + DRAW_WIDTH) {
-            t.playheadX = STAVE_LEFT;
+            t.playheadX = CURSOR_PARK_X;
             t.currentLine++;
             if (t.currentLine >= t.lines) {
                 t.isPlaying = false;
@@ -481,21 +696,49 @@
         document.getElementById('metroBtn').innerText = isMetronome ? "🥁 Metro: ON" : "🥁 Metro: OFF";
     }
 
+    function toggleCursorPlaceMode() {
+        isCursorPlaceMode = !isCursorPlaceMode;
+        cursorBtn.innerText = isCursorPlaceMode ? "🎯 Set Cursor: ON" : "🎯 Set Cursor: OFF";
+        cursorBtn.style.background = isCursorPlaceMode ? "#0078d4" : "#eee";
+        cursorBtn.style.color = isCursorPlaceMode ? "white" : "inherit";
+    }
+
+    function placePlaybackCursorAt(mX, mY) {
+        if (activeTabIndex === -1) return false;
+        const t = tabs[activeTabIndex];
+        const line = Math.floor((mY - TOP_MARGIN + 40) / LINE_HEIGHT);
+        if (line < 0 || line >= t.lines) return false;
+        if (mX < STAVE_LEFT || mX > STAVE_LEFT + DRAW_WIDTH) return false;
+
+        t.currentLine = line;
+        t.playheadX = Math.max(STAVE_LEFT, Math.min(STAVE_LEFT + DRAW_WIDTH, mX));
+        t.notes.forEach(n => { if (n.line === t.currentLine) n.played = false; });
+        if (t.isPlaying) {
+            t.isPlaying = false;
+            document.getElementById('playBtn').innerText = "▶ Play";
+            document.getElementById('playBtn').style.background = "#28a745";
+        }
+        draw();
+        persistSession();
+        return true;
+    }
+
     function rewind() {
         const t = tabs[activeTabIndex];
         t.isPlaying = false;
-        t.playheadX = STAVE_LEFT;
+        t.playheadX = CURSOR_PARK_X;
         t.currentLine = 0;
         t.notes.forEach(n => n.played = false);
         document.getElementById('playBtn').innerText = "▶ Play";
         document.getElementById('playBtn').style.background = "#28a745";
         draw();
+        persistSession();
     }
 
     // ====================== INPUT HANDLERS ======================
 
     window.onkeydown = (e) => {
-        if (document.activeElement.tagName === 'INPUT' || activeTabIndex === -1) return;
+        if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT' || activeTabIndex === -1) return;
         const t = tabs[activeTabIndex];
 
         if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); return; }
@@ -534,19 +777,24 @@
         if (selectedNotes.length === 1) {
             let n = selectedNotes[0];
             if (e.key >= '0' && e.key <= '9') {
-                n.fret = n.firstKey ? e.key : n.fret + e.key;
+                const nextFret = n.firstKey ? e.key : n.fret + e.key;
+                n.fret = `${Math.min(36, parseInt(nextFret, 10) || 0)}`;
+                n.hasFret = true;
                 n.firstKey = false;
                 playAudio(BASS_FREQS[n.string] * Math.pow(2, (parseInt(n.fret) || 0) / 12));
             }
             if (e.key === '+' || e.key === '=') {
-                n.fret = (parseInt(n.fret) + 1).toString();
+                n.fret = `${Math.min(36, (parseInt(n.fret, 10) || 0) + 1)}`;
+                n.hasFret = true;
                 playAudio(BASS_FREQS[n.string] * Math.pow(2, (parseInt(n.fret) || 0) / 12));
             }
             if (e.key === '-' || e.key === '_') {
-                n.fret = Math.max(0, parseInt(n.fret) - 1).toString();
+                n.fret = `${Math.max(0, (parseInt(n.fret, 10) || 0) - 1)}`;
+                n.hasFret = true;
                 playAudio(BASS_FREQS[n.string] * Math.pow(2, (parseInt(n.fret) || 0) / 12));
             }
             draw();
+            persistSession();
         }
     };
 
@@ -556,29 +804,96 @@
         const mX = (e.clientX - rect.left) / scale;
         const mY = (e.clientY - rect.top) / scale;
         const t = tabs[activeTabIndex];
+        selectedChord = null;
+
+        const hit = getBarlineHit(mX, mY, t);
+        if (hit && hit.measureNumber <= t.lines * 4) {
+            selectedNotes = [];
+            if (isAwaitingPasteBarline && measureClipboard) {
+                pasteMeasureAt(hit.measureNumber);
+                isAwaitingPasteBarline = false;
+                draw();
+                saveHistory();
+                return;
+            }
+            if (e.ctrlKey) {
+                if (selectedMeasures.includes(hit.measureNumber)) {
+                    selectedMeasures = selectedMeasures.filter(m => m !== hit.measureNumber);
+                } else {
+                    selectedMeasures.push(hit.measureNumber);
+                    selectedMeasures.sort((a, b) => a - b);
+                }
+            } else {
+                selectedMeasures = [hit.measureNumber];
+            }
+            draw();
+            return;
+        }
+        if (isAwaitingPasteBarline) {
+            return;
+        }
+
+        if ((isCursorPlaceMode || e.altKey) && placePlaybackCursorAt(mX, mY)) {
+            return;
+        }
 
         if (mY < 90) {
             const newT = prompt("Song Title:", t.songTitle);
-            if (newT) t.songTitle = newT.toUpperCase();
+            if (newT) t.songTitle = newT.toUpperCase().substring(0, 60);
             renderTabs();
             draw();
+            saveHistory();
             return;
         }
         if (mY > 90 && mY < 135 && mX < 340) {
             const b = prompt("BPM:", t.bpm);
-            if (b && !isNaN(b)) t.bpm = parseInt(b);
+            if (b && !isNaN(b)) t.bpm = Math.min(300, Math.max(30, parseInt(b, 10)));
             draw();
+            saveHistory();
             return;
         }
         if (mY > 90 && mY < 135 && mX > 340 && mX < 650) {
             const s = prompt("Beats per measure:", t.timeSig);
-            if (s && !isNaN(s)) t.timeSig = parseInt(s);
+            if (s && !isNaN(s)) t.timeSig = Math.min(12, Math.max(1, parseInt(s, 10)));
+            draw();
+            saveHistory();
+            return;
+        }
+
+        const foundChord = t.chords.find(ch => {
+            const chordY = TOP_MARGIN + (ch.line * LINE_HEIGHT) - CHORD_OFFSET;
+            return Math.abs(ch.x - mX) < 24 && Math.abs(chordY - mY) < 18;
+        });
+        if (foundChord) {
+            selectedNotes = [];
+            selectedChord = foundChord;
+            isDraggingChord = true;
             draw();
             return;
         }
 
+        const chordLine = Math.floor((mY - TOP_MARGIN + CHORD_OFFSET + 20) / LINE_HEIGHT);
+        if (chordLine >= 0 && chordLine < t.lines) {
+            const targetChordY = TOP_MARGIN + (chordLine * LINE_HEIGHT) - CHORD_OFFSET;
+            if (Math.abs(mY - targetChordY) < 20 && mX >= STAVE_LEFT && mX <= STAVE_LEFT + DRAW_WIDTH) {
+                const newChord = {
+                    x: Math.max(STAVE_LEFT, Math.min(STAVE_LEFT + DRAW_WIDTH, mX)),
+                    line: chordLine,
+                    symbol: chordSelect.value || "C"
+                };
+                t.chords.push(newChord);
+                selectedNotes = [];
+                selectedChord = newChord;
+                isDraggingChord = true;
+                draw();
+                saveHistory();
+                return;
+            }
+        }
+
         const found = t.notes.find(n => Math.hypot(n.x - mX, n.y - mY) < 22);
         if (found) {
+            selectedMeasures = [];
             selectedNotes = [found];
             isDragging = true;
             found.firstKey = true;
@@ -588,6 +903,12 @@
             const sIdx = Math.round((mY - (TOP_MARGIN + lIdx * LINE_HEIGHT)) / STRING_SPACING);
 
             if (sIdx >= 0 && sIdx <= 3 && lIdx >= 0 && lIdx < t.lines) {
+                const localX = mX - STAVE_LEFT;
+                const nearestBarline = Math.round(localX / MEASURE_WIDTH) * MEASURE_WIDTH + STAVE_LEFT;
+                if (Math.abs(mX - nearestBarline) < NOTE_CREATION_BARLINE_MARGIN) {
+                    draw();
+                    return;
+                }
                 const step = MEASURE_WIDTH / parseInt(resInput.value);
                 let relX = mX - STAVE_LEFT;
                 let measIdx = Math.floor(relX / MEASURE_WIDTH);
@@ -598,14 +919,16 @@
                 const newNote = {
                     x: Math.max(STAVE_LEFT, Math.min(STAVE_LEFT + DRAW_WIDTH, xPos)),
                     y: TOP_MARGIN + (lIdx * LINE_HEIGHT) + (sIdx * STRING_SPACING),
-                    fret: "0",
+                    fret: "",
                     string: sIdx,
                     line: lIdx,
+                    hasFret: false,
                     played: false,
                     firstKey: true
                 };
 
                 t.notes.push(newNote);
+                selectedMeasures = [];
                 selectedNotes = [newNote];
                 isDragging = true;
                 playAudio(BASS_FREQS[newNote.string] * Math.pow(2, 0));
@@ -616,6 +939,19 @@
     };
 
     window.onmousemove = (e) => {
+        if (isDraggingChord && selectedChord && activeTabIndex !== -1) {
+            const rect = canvas.getBoundingClientRect();
+            const scale = parseFloat(zoomSlider.value);
+            const mX = (e.clientX - rect.left) / scale;
+            const mY = (e.clientY - rect.top) / scale;
+            const t = tabs[activeTabIndex];
+            selectedChord.x = Math.max(STAVE_LEFT, Math.min(STAVE_LEFT + DRAW_WIDTH, mX));
+            const lIdx = Math.floor((mY - TOP_MARGIN + CHORD_OFFSET + 20) / LINE_HEIGHT);
+            if (lIdx >= 0 && lIdx < t.lines) selectedChord.line = lIdx;
+            draw();
+            return;
+        }
+
         if (!isDragging || selectedNotes.length !== 1) return;
         const rect = canvas.getBoundingClientRect();
         const scale = parseFloat(zoomSlider.value);
@@ -643,19 +979,33 @@
     };
 
     window.onmouseup = () => {
-        if (isDragging) saveHistory();
+        if (isDragging || isDraggingChord) saveHistory();
         isDragging = false;
+        isDraggingChord = false;
     };
 
     canvas.oncontextmenu = (e) => {
         e.preventDefault();
+        const t = tabs[activeTabIndex];
+        if (selectedChord) {
+            const action = prompt("Chord Options:\n1. Delete\n2. Change to selected dropdown chord\nEnter number:", "");
+            if (action === "1") {
+                t.chords = t.chords.filter(ch => ch !== selectedChord);
+                selectedChord = null;
+            } else if (action === "2") {
+                selectedChord.symbol = chordSelect.value || selectedChord.symbol;
+            }
+            draw();
+            saveHistory();
+            return;
+        }
+
         if (selectedNotes.length !== 1) return;
 
         const note = selectedNotes[0];
         const action = prompt("Note Options:\n1. Delete\n2. String Up\n3. String Down\nEnter number:", "");
 
         if (action === "1") {
-            const t = tabs[activeTabIndex];
             t.notes = t.notes.filter(n => n !== note);
             selectedNotes = [];
         } else if (action === "2" && note.string > 0) {
@@ -691,13 +1041,252 @@
         saveHistory();
     }
 
-    function saveSong() {
+    function getMeasureBounds(measureNumber) {
+        const zeroBased = measureNumber - 1;
+        const line = Math.floor(zeroBased / 4);
+        const measureInLine = zeroBased % 4;
+        const startX = STAVE_LEFT + (measureInLine * MEASURE_WIDTH);
+        const endX = startX + MEASURE_WIDTH;
+        return { line, measureInLine, startX, endX };
+    }
+
+    function getBarlineHit(mX, mY, t) {
+        if (mX < STAVE_LEFT - BARLINE_HIT_RADIUS || mX > STAVE_LEFT + DRAW_WIDTH + BARLINE_HIT_RADIUS) return null;
+        for (let line = 0; line < t.lines; line++) {
+            const yBase = TOP_MARGIN + (line * LINE_HEIGHT);
+            if (mY < yBase - 10 || mY > yBase + (3 * STRING_SPACING) + 10) continue;
+            for (let b = 0; b <= 4; b++) {
+                const x = STAVE_LEFT + (b * MEASURE_WIDTH);
+                if (Math.abs(mX - x) <= BARLINE_HIT_RADIUS) {
+                    const effectiveMeasureStart = b === 4 ? 4 : b;
+                    const measureNumber = (line * 4) + effectiveMeasureStart + 1;
+                    return { line, barline: b, measureNumber };
+                }
+            }
+        }
+        return null;
+    }
+
+    function getPreferredMeasureNumber() {
+        if (activeTabIndex === -1) return 1;
         const t = tabs[activeTabIndex];
-        const blob = new Blob([JSON.stringify(t)], { type: 'application/json' });
+        if (selectedNotes.length === 1) {
+            const measureInLine = Math.floor((selectedNotes[0].x - STAVE_LEFT) / MEASURE_WIDTH);
+            return (selectedNotes[0].line * 4) + measureInLine + 1;
+        }
+        if (selectedChord) {
+            const measureInLine = Math.floor((selectedChord.x - STAVE_LEFT) / MEASURE_WIDTH);
+            return (selectedChord.line * 4) + measureInLine + 1;
+        }
+        const playMeasureInLine = Math.floor((t.playheadX - STAVE_LEFT) / MEASURE_WIDTH);
+        return (t.currentLine * 4) + Math.max(0, Math.min(3, playMeasureInLine)) + 1;
+    }
+
+    function promptForMeasureNumber(defaultValue, maxValue, title) {
+        const raw = prompt(`${title} (1-${maxValue}):`, `${defaultValue}`);
+        if (raw === null) return null;
+        const parsed = parseInt(raw, 10);
+        if (!Number.isFinite(parsed) || parsed < 1 || parsed > maxValue) {
+            alert(`Please enter a valid measure from 1 to ${maxValue}.`);
+            return null;
+        }
+        return parsed;
+    }
+
+    function copyMeasure() {
+        if (activeTabIndex === -1) return;
+        const t = tabs[activeTabIndex];
+        const maxMeasures = t.lines * 4;
+        const sourceMeasures = selectedMeasures.length
+            ? [...selectedMeasures]
+            : [promptForMeasureNumber(
+                Math.max(1, Math.min(maxMeasures, getPreferredMeasureNumber())),
+                maxMeasures,
+                "Copy which measure"
+            )].filter(Boolean);
+        if (sourceMeasures.length === 0) return;
+
+        const blocks = sourceMeasures.sort((a, b) => a - b).map(measureNumber => {
+            const sourceBounds = getMeasureBounds(measureNumber);
+            return {
+                measureNumber,
+                notes: t.notes
+                    .filter(n => n.line === sourceBounds.line && n.x >= sourceBounds.startX && n.x < sourceBounds.endX)
+                    .map(n => ({ ...n, relX: n.x - sourceBounds.startX })),
+                chords: (t.chords || [])
+                    .filter(ch => ch.line === sourceBounds.line && ch.x >= sourceBounds.startX && ch.x < sourceBounds.endX)
+                    .map(ch => ({ ...ch, relX: ch.x - sourceBounds.startX })),
+                lyric: t.lyrics[sourceBounds.line] || ""
+            };
+        });
+
+        measureClipboard = {
+            blocks,
+            sourceMeasures
+        };
+        alert(`Copied ${blocks.length} measure${blocks.length === 1 ? "" : "s"}. Click Paste Measure, then click a destination barline.`);
+    }
+
+    function pasteMeasure() {
+        if (activeTabIndex === -1) return;
+        if (!measureClipboard) {
+            alert("No measure copied yet.");
+            return;
+        }
+        isAwaitingPasteBarline = true;
+        alert("Paste armed. Click a destination barline to paste starting there.");
+    }
+
+    function pasteMeasureAt(targetMeasure) {
+        const t = tabs[activeTabIndex];
+        const maxMeasures = t.lines * 4;
+        if (targetMeasure < 1 || targetMeasure > maxMeasures) return;
+        const includeNotes = confirm("Include notes?");
+        const includeChords = confirm("Include chords?");
+        const includeLyrics = confirm("Include lyric line text?");
+        if (!includeNotes && !includeChords && !includeLyrics) return;
+
+        const replaceExisting = confirm("Replace existing content in destination measure for selected types?");
+        const newSelection = [];
+        const pastedMeasures = [];
+        const blocks = (measureClipboard.blocks || []).slice().sort((a, b) => a.measureNumber - b.measureNumber);
+
+        blocks.forEach((block, idx) => {
+            const destinationMeasure = targetMeasure + idx;
+            if (destinationMeasure > maxMeasures) return;
+            const targetBounds = getMeasureBounds(destinationMeasure);
+            pastedMeasures.push(destinationMeasure);
+
+            if (replaceExisting) {
+                if (includeNotes) {
+                    t.notes = t.notes.filter(n => !(n.line === targetBounds.line && n.x >= targetBounds.startX && n.x < targetBounds.endX));
+                }
+                if (includeChords) {
+                    t.chords = (t.chords || []).filter(ch => !(ch.line === targetBounds.line && ch.x >= targetBounds.startX && ch.x < targetBounds.endX));
+                }
+            }
+
+            if (includeNotes) {
+                block.notes.forEach(src => {
+                    const x = Math.max(targetBounds.startX, Math.min(targetBounds.endX - 2, targetBounds.startX + src.relX));
+                    const clone = {
+                        ...src,
+                        x,
+                        line: targetBounds.line,
+                        y: TOP_MARGIN + (targetBounds.line * LINE_HEIGHT) + (src.string * STRING_SPACING),
+                        played: false,
+                        firstKey: true
+                    };
+                    delete clone.relX;
+                    t.notes.push(clone);
+                    newSelection.push(clone);
+                });
+            }
+
+            if (includeChords) {
+                block.chords.forEach(src => {
+                    const x = Math.max(targetBounds.startX, Math.min(targetBounds.endX - 2, targetBounds.startX + src.relX));
+                    const clone = {
+                        ...src,
+                        x,
+                        line: targetBounds.line
+                    };
+                    delete clone.relX;
+                    t.chords.push(clone);
+                });
+            }
+
+            if (includeLyrics) {
+                t.lyrics[targetBounds.line] = block.lyric || "";
+            }
+        });
+
+        selectedMeasures = pastedMeasures;
+        selectedNotes = includeNotes ? newSelection : [];
+        if (includeLyrics) {
+            syncLyrics();
+        }
+
+        selectedChord = null;
+    }
+
+    function buildChordLibrary() {
+        const roots = ["C", "C#", "Db", "D", "D#", "Eb", "E", "F", "F#", "Gb", "G", "G#", "Ab", "A", "A#", "Bb", "B"];
+        const qualities = ["", "m", "5", "6", "m6", "7", "maj7", "m7", "9", "m9", "11", "13", "sus2", "sus4", "add9", "dim", "aug"];
+        const symbols = ["N.C."];
+
+        roots.forEach(root => {
+            qualities.forEach(q => symbols.push(root + q));
+        });
+
+        chordSelect.innerHTML = "";
+        symbols.forEach(sym => {
+            const option = document.createElement("option");
+            option.value = sym;
+            option.textContent = sym;
+            chordSelect.appendChild(option);
+        });
+        chordSelect.value = "C";
+    }
+
+    function persistSession() {
+        try {
+            localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+                tabs: tabs.map(tab => serializeTabState(tab)),
+                activeTabIndex
+            }));
+        } catch (err) {
+            // Ignore storage quota / browser privacy mode issues.
+        }
+    }
+
+    function restoreSession() {
+        try {
+            const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+            if (!raw) return false;
+            const parsed = JSON.parse(raw);
+            if (!parsed || !Array.isArray(parsed.tabs) || parsed.tabs.length === 0) return false;
+            tabs = parsed.tabs.map(t => sanitizeTab(t));
+            const nextIndex = Math.max(0, Math.min(tabs.length - 1, parseInt(parsed.activeTabIndex, 10) || 0));
+            switchTab(nextIndex);
+            return true;
+        } catch (err) {
+            return false;
+        }
+    }
+
+    async function saveSong() {
+        const t = tabs[activeTabIndex];
+        const defaultName = (t.songTitle || "bass_song").toLowerCase().replace(/ /g, '_') + '.bass';
+        const jsonText = JSON.stringify(t);
+
+        if (typeof window.showSaveFilePicker === 'function') {
+            try {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: defaultName,
+                    types: [{
+                        description: "Bass Tab Studio",
+                        accept: { "application/json": [".bass"], "text/plain": [".bass", ".json"] }
+                    }]
+                });
+                const writable = await handle.createWritable();
+                await writable.write(jsonText);
+                await writable.close();
+                persistSession();
+                return;
+            } catch (e) {
+                if (e && e.name === "AbortError") return;
+            }
+        }
+
+        const blob = new Blob([jsonText], { type: 'application/json' });
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = (t.songTitle || "bass_song").toLowerCase().replace(/ /g, '_') + '.bass';
+        const url = URL.createObjectURL(blob);
+        a.href = url;
+        a.download = defaultName;
         a.click();
+        URL.revokeObjectURL(url);
+        persistSession();
     }
 
     function loadSong() {
@@ -708,6 +1297,7 @@
             reader.onload = ev => {
                 try {
                     createNewTab(null, JSON.parse(ev.target.result));
+                    persistSession();
                 } catch (err) {
                     alert("Failed to load file.");
                 }
